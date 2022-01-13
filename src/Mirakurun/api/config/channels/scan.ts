@@ -49,12 +49,14 @@ interface ChannelScanOption {
     scanMode?: ScanMode;
     setDisabledOnAdd?: boolean;
     refresh?: boolean;
+    space?: number;
 }
 
 interface ScanConfig {
     readonly channels: string[];
     readonly scanMode: ScanMode;
     readonly setDisabledOnAdd: boolean;
+    readonly space: number;
 }
 
 function range(start: number, end: number): string[] {
@@ -65,6 +67,45 @@ export function generateScanConfig(option: ChannelScanOption): ScanConfig {
 
     // delete undefined from option
     Object.keys(option).forEach(key => option[key] === undefined && delete option[key]);
+
+    if (process.platform === "win32") {
+        option = {
+            scanMode: ScanMode.Channel,
+            setDisabledOnAdd: false,
+            ...option
+        };
+        if (option.type === common.ChannelTypes.GR) {
+            option = {
+                startCh: 0,
+                endCh: 49,
+                space: 0,
+                ...option
+            };
+        }
+        if (option.type === common.ChannelTypes.BS) {
+            option = {
+                startCh: 0,
+                endCh: 25,
+                space: 0,
+                ...option
+            };
+        }
+        if (option.type === common.ChannelTypes.CS) {
+            option = {
+                startCh: 0,
+                endCh: 11,
+                space: 1,
+                ...option
+            };
+        }
+
+        return {
+            channels: range(option.startCh, option.endCh).map((ch) => ch),
+            scanMode: option.scanMode,
+            setDisabledOnAdd: option.setDisabledOnAdd,
+            space: option.space
+        };
+    }
 
     if (option.type === common.ChannelTypes.GR) {
         option = {
@@ -78,7 +119,8 @@ export function generateScanConfig(option: ChannelScanOption): ScanConfig {
         return {
             channels: range(option.startCh, option.endCh).map((ch) => ch),
             scanMode: option.scanMode,
-            setDisabledOnAdd: option.setDisabledOnAdd
+            setDisabledOnAdd: option.setDisabledOnAdd,
+            space: option.space
         };
     }
 
@@ -108,7 +150,8 @@ export function generateScanConfig(option: ChannelScanOption): ScanConfig {
             return {
                 channels: channels,
                 scanMode: option.scanMode,
-                setDisabledOnAdd: option.setDisabledOnAdd
+                setDisabledOnAdd: option.setDisabledOnAdd,
+                space: option.space
             };
         }
 
@@ -121,7 +164,8 @@ export function generateScanConfig(option: ChannelScanOption): ScanConfig {
         return {
             channels: range(option.startCh, option.endCh).map((ch) => ch),
             scanMode: option.scanMode,
-            setDisabledOnAdd: option.setDisabledOnAdd
+            setDisabledOnAdd: option.setDisabledOnAdd,
+            space: option.space
         };
     }
 
@@ -135,12 +179,13 @@ export function generateScanConfig(option: ChannelScanOption): ScanConfig {
         return {
             channels: range(option.startCh, option.endCh).map((ch) => `CS${ch}`),
             scanMode: option.scanMode,
-            setDisabledOnAdd: option.setDisabledOnAdd
+            setDisabledOnAdd: option.setDisabledOnAdd,
+            space: option.space
         };
     }
 }
 
-export function generateChannelItemForService(type: common.ChannelType, channel: string, service: db.Service, setDisabledOnAdd: boolean): config.Channel {
+export function generateChannelItemForService(type: common.ChannelType, channel: string, service: db.Service, setDisabledOnAdd: boolean, space: number): config.Channel {
 
     let name = service.name;
     name = name.trim();
@@ -151,13 +196,14 @@ export function generateChannelItemForService(type: common.ChannelType, channel:
     return {
         name: name,
         type: type,
+        space: space,
         channel: channel,
         serviceId: service.serviceId,
         isDisabled: setDisabledOnAdd
     };
 }
 
-export function generateChannelItemForChannel(type: common.ChannelType, channel: string, services: db.Service[], setDisabledOnAdd: boolean): config.Channel {
+export function generateChannelItemForChannel(type: common.ChannelType, channel: string, services: db.Service[], setDisabledOnAdd: boolean, space: number): config.Channel {
 
     const baseName = services[0].name;
     let matchIndex = baseName.length;
@@ -183,29 +229,30 @@ export function generateChannelItemForChannel(type: common.ChannelType, channel:
 
     let name = baseName.slice(0, matchIndex);
     name = name.trim();
-    if (name.length === 0) {
+    if (name.length === 0 || type === "CS") {
         name = `${type}${channel}`;
     }
 
     return {
         name: name,
         type: type,
+        space: space,
         channel: channel,
         isDisabled: setDisabledOnAdd
     };
 }
 
-export function generateChannelItems(scanMode: ScanMode, type: common.ChannelType, channel: string, services: db.Service[], setDisabledOnAdd: boolean): config.Channel[] {
+export function generateChannelItems(scanMode: ScanMode, type: common.ChannelType, channel: string, services: db.Service[], setDisabledOnAdd: boolean, space: number): config.Channel[] {
 
     if (scanMode === ScanMode.Service) {
         const channelItems: config.Channel[] = [];
         for (const service of services) {
-            channelItems.push(generateChannelItemForService(type, channel, service, setDisabledOnAdd));
+            channelItems.push(generateChannelItemForService(type, channel, service, setDisabledOnAdd, space));
         }
         return channelItems;
     }
 
-    return [generateChannelItemForChannel(type, channel, services, setDisabledOnAdd)];
+    return [generateChannelItemForChannel(type, channel, services, setDisabledOnAdd, space)];
 }
 
 export const put: Operation = async (req, res) => {
@@ -241,7 +288,8 @@ export const put: Operation = async (req, res) => {
         endSubCh: req.query.maxSubCh as any as number,
         useSubCh: req.query.useSubCh as any as boolean,
         scanMode: req.query.scanMode as any as ScanMode,
-        setDisabledOnAdd: req.query.setDisabledOnAdd as any as boolean
+        setDisabledOnAdd: req.query.setDisabledOnAdd as any as boolean,
+        space: req.query.space as any as number
     });
 
     const chLength = scanConfig.channels.length;
@@ -268,7 +316,8 @@ export const put: Operation = async (req, res) => {
         try {
             services = await _.tuner.getServices(<any> {
                 type: type,
-                channel: channel
+                channel: channel,
+                space: scanConfig.space
             });
         } catch (e) {
             res.write("-> no signal.");
@@ -287,7 +336,7 @@ export const put: Operation = async (req, res) => {
             continue;
         }
 
-        const scannedChannelItems = generateChannelItems(scanConfig.scanMode, type, channel, services, scanConfig.setDisabledOnAdd);
+        const scannedChannelItems = generateChannelItems(scanConfig.scanMode, type, channel, services, scanConfig.setDisabledOnAdd, scanConfig.space);
         for (const scannedChannelItem of scannedChannelItems) {
             result.push(scannedChannelItem);
             ++newCount;
@@ -362,6 +411,12 @@ About BS Subchannel Style:
             enum: [common.ChannelTypes.GR, common.ChannelTypes.BS, common.ChannelTypes.CS],
             default: common.ChannelTypes.GR,
             description: "Specifies the channel type to scan."
+        },
+        {
+            in: "query",
+            name: "space",
+            type: "integer",
+            description: "Specifies the space number to scan."
         },
         {
             in: "query",
